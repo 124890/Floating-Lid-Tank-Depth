@@ -6,6 +6,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pysolar.solar import get_altitude
 
+# Calibration from a known reference image where wall height was measured manually.
+DEFAULT_PIXELS_PER_METRE = 52.0
+
+# Edge/line detection defaults tuned for typical tank images with strong rim/shadow contrast.
+GAUSSIAN_KERNEL = (7, 7)
+CANNY_LOW_THRESHOLD = 50
+CANNY_HIGH_THRESHOLD = 150
+HOUGH_THRESHOLD = 100
+HOUGH_MIN_LINE_LENGTH = 200
+HOUGH_MAX_LINE_GAP = 20
+MAX_HORIZONTAL_ANGLE_DEGREES = 10
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -24,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pixels-per-metre",
         type=float,
-        default=52.0,
+        default=DEFAULT_PIXELS_PER_METRE,
         help="Pixel-to-metre calibration for the tank wall",
     )
     parser.add_argument(
@@ -45,16 +57,16 @@ def _mid_y(line: tuple[int, int, int, int]) -> float:
 
 
 def detect_horizontal_lines(gray: np.ndarray) -> list[tuple[int, int, int, int]]:
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    edges = cv2.Canny(blur, 50, 150)
+    blur = cv2.GaussianBlur(gray, GAUSSIAN_KERNEL, 0)
+    edges = cv2.Canny(blur, CANNY_LOW_THRESHOLD, CANNY_HIGH_THRESHOLD)
 
     lines = cv2.HoughLinesP(
         edges,
         rho=1,
         theta=np.pi / 180,
-        threshold=100,
-        minLineLength=200,
-        maxLineGap=20,
+        threshold=HOUGH_THRESHOLD,
+        minLineLength=HOUGH_MIN_LINE_LENGTH,
+        maxLineGap=HOUGH_MAX_LINE_GAP,
     )
 
     if lines is None:
@@ -64,7 +76,7 @@ def detect_horizontal_lines(gray: np.ndarray) -> list[tuple[int, int, int, int]]
     for line in lines:
         x1, y1, x2, y2 = line[0]
         angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-        if abs(angle) < 10:
+        if abs(angle) < MAX_HORIZONTAL_ANGLE_DEGREES:
             horizontal_lines.append((x1, y1, x2, y2))
 
     if not horizontal_lines:
