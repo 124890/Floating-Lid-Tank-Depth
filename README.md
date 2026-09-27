@@ -1,139 +1,108 @@
-# Oil Storage Tank Image Analysis
+# Satellite imagery pipeline for oil-storage research
 
-Satellite imagery and computer vision to estimate floating-roof tank levels.
+A Python command-line prototype that connects tank discovery, satellite imagery, computer vision and reviewable JSON output.
 
-> This is an estimation and review workflow, not a direct inventory measurement.
-> Absolute volume requires facility-specific calibration/strapping tables and
-> analyst validation. Do not use low-confidence observations as a trading signal.
+**Status:** research prototype. The reported `fill_percentage` is an uncalibrated image-gradient heuristic. It has not been validated against measured tank levels. The project demonstrates an integration and image-analysis workflow.
 
-**Exploratory computer vision for alternative data in energy research.**
+[Quick start](#quick-start) · [Architecture](#architecture) · [Tests](#tests) · [Limitations](#limitations)
 
-Can visible tank boundaries and floating-roof shadows provide useful inputs for estimating oil inventories? This project explores that question using Python and OpenCV.
+## What the project does
 
-**Status:** image-analysis prototype. The current notebook detects candidate tank circles, shadow contours and lid edges. It does **not** yet calculate a validated tank fill percentage.
+Given a depot name or tank coordinates, the pipeline:
 
-[Explore the notebook](estimate_fill_level.ipynb) · [Dependencies](requirements.txt)
+1. Resolves a depot using Nominatim and discovers nearby mapped storage tanks through OpenStreetMap Overpass.
+2. Searches Sentinel-2 imagery through Microsoft Planetary Computer, or uses a configured commercial imagery URL template.
+3. Detects a candidate circular roof with OpenCV and computes an exploratory image-gradient proxy.
+4. Checks the detected feature's position and, where metadata permits, approximate scale.
+5. Produces JSON with imagery provenance, diagnostics and heuristic quality indicators, plus an image overlay for review.
 
-## What is implemented
+The implementation separates network providers from the estimator so image analysis can be exercised with local fixtures.
 
-- Image loading, grayscale conversion and Gaussian smoothing.
-- Canny edge detection and Hough circle detection for candidate tank boundaries.
-- Contour filtering using circularity, radius and distance from the tank centre.
-- Ranking candidate lid-edge contours and visualising them over the source image.
-- Configurable detection parameters and intermediate plots for inspection.
+## Quick start
 
-**Tools:** Python, OpenCV, NumPy and Matplotlib. The notebook also imports PySolar and defines tank geometry, location and timestamp inputs for the intended estimation workflow.
-
-## Install
-
+Use Python 3.10 or later from the repository root:
 
 ```bash
+python -m venv .venv
+# macOS / Linux
+source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m pip install jupyterlab
-python -m jupyterlab
+python estimate_satellite_fill.py --help
 ```
 
-Open `estimate_fill_level.ipynb` from the repository folder. Review `IMAGE_PATH` and the detection parameters before executing cells.
-
-**Known notebook issue:** the cell beginning `## 6b. Detect Shadow Contours Inside Tank Circles` contains explanatory prose but is marked as Code. Change that cell to Markdown before running the notebook from top to bottom.
-
-## Interpretation and limitations
-
-Detected circles and contours are candidate image features, not confirmed tank measurements. Results depend on image resolution, perspective, contrast and manually tuned thresholds.
-
-The geometry, timestamp, coordinates and pixel scale in the notebook are example configuration values; they should not be treated as verified metadata for the included image. A fill-level calculation, ground-truth comparison and uncertainty analysis are still needed before making inventory claims.
-
-## Next research steps
-
-1. Validate tank and lid-edge detections against manually labelled images.
-2. Incorporate verified image metadata, camera geometry and pixel calibration.
-3. Implement and test the conversion from shadow geometry to roof height and fill level.
-4. Quantify errors across tanks, viewing angles and lighting conditions.
-
-The intended application is alternative-data research for energy markets. The current output is an exploratory visual analysis.
-
-## Free imagery and accuracy
-
-The CLI uses Copernicus Sentinel-2 L2A imagery through the public Microsoft
-Planetary Computer STAC API when commercial imagery is unavailable. No API key
-is required. Sentinel-2 has
-10 m pixels in its best visible bands, so the imagery supports regional
-screening and trend review, not accurate tank-wall or floating-lid edge
-mapping. OpenStreetMap tank geometries are used to centre the crop and should
-be visually verified.
-
-There is no openly licensed, systematic sub-metre satellite archive covering
-EU storage tanks. Any workflow claiming survey-grade lid edges from free
-Sentinel-2 imagery would be misleading; use licensed high-resolution imagery
-if that precision becomes a hard requirement.
-
-## Automated satellite estimate
-
-The focused CLI resolves a depot name, finds nearby mapped storage tanks, and
-returns a JSON fill estimate:
+Run discovery and imagery retrieval:
 
 ```bash
-python estimate_satellite_fill.py "Immingham oil terminal" --provider auto
+python estimate_satellite_fill.py "Immingham oil terminal" --provider sentinel
 ```
 
-For a verified tank coordinate, bypass depot discovery and supply optional
-dimensions directly:
+This command makes requests to external services. Coverage, service availability, image resolution and feature detection can prevent a result. By default the CLI chooses the first discovered tank; use `--tank-id` to select a known OSM candidate.
+
+For a verified tank centre, supply both coordinates:
 
 ```bash
 python estimate_satellite_fill.py \
-  --latitude 53.61 --longitude -0.19 \
-  --diameter-m 80 --height-m 22 \
-  --provider sentinel
+  --latitude YOUR_TANK_LATITUDE --longitude YOUR_TANK_LONGITUDE \
+  --diameter-m YOUR_TANK_DIAMETER --height-m YOUR_TANK_HEIGHT \
+  --provider sentinel --overlay-path inspection.png
 ```
 
-The coordinate must identify the tank centre, not merely the depot or town.
-The pipeline rejects imagery when the detected circular feature is not centred
-and at the expected scale for the supplied tank diameter.
+Replace the capitalised placeholders with numeric measurements. A depot or town coordinate is not sufficient to identify an individual tank. The default search window is 30 days; change it with `--days`.
 
-`auto` uses `TANK_IMAGERY_URL_TEMPLATE` when configured for a commercial
-orthorectified tile provider, then falls back to Sentinel-2 through Planetary
-Computer. The URL template receives `latitude`, `longitude`, `start`, and
-`end`; credentials should be handled by the provider or proxy and never placed
-in source control. Use `--tank-id` after discovery when a depot has multiple
-tanks.
+## Architecture
 
-The output contains `fill_percentage`, `certainty` (`High`, `Medium`, or
-`Low`), a numeric certainty score, imagery provenance, solar elevation, and
-diagnostics. It also writes an `inspection_overlay` PNG by default, or to the
-path supplied with `--overlay-path`. The overlay shows the detected tank circle
-in cyan, all candidate horizontal edge lines in orange, and the selected
-lid/shadow boundary in green so the analyst can visually inspect the mapping.
-Sentinel-2 results are explicitly marked as fallback imagery and
-receive a confidence penalty. Tank dimensions from OpenStreetMap or image
-inference are approximate; use facility calibration and high-resolution
-imagery for operational decisions.
+| File | Responsibility |
+| --- | --- |
+| [estimate_satellite_fill.py](estimate_satellite_fill.py) | CLI arguments, provider selection, error handling and JSON output |
+| [satellite_fill.py](satellite_fill.py) | Tank discovery, imagery adapters, circle detection, heuristic measurement and overlay generation |
+| [test_satellite_fill.py](test_satellite_fill.py) | Unit tests using synthetic images and mocked provider responses |
+| [requirements.txt](requirements.txt) | OpenCV, NumPy, PySolar and requests dependencies |
 
-## Runtime contract
+`TankCandidate`, `ImageryScene` and `ShadowMeasurement` hold the main inputs and outputs. `estimate_scene` assembles the result and applies position and scale checks.
 
-The pipeline is deliberately conservative:
+The CLI supports `sentinel`, `commercial` and `auto`. In `auto` mode it tries the configured commercial adapter first, then Sentinel-2 when that adapter returns no scenes. A provider request exception exits with an unavailable result.
 
-- A depot name is resolved through Nominatim, then nearby OSM storage tanks are
-  queried through several Overpass endpoints.
-- Sentinel-2 STAC search selects a recent scene, but the downloaded image is a
-  coordinate-centred Web Mercator tile rather than an unbounded scene preview.
-- The selected tank must be centred in the tile. If a verified diameter is
-  supplied, the detected circle must also be within the expected pixel scale.
-- Missing imagery, an unrecognisable roof, a misplaced circle, or a scale
-  mismatch returns an explicit `unavailable` result instead of a guessed fill.
-- Sentinel-2 is 10 m imagery. A successful result is therefore screening-level
-  even when the geometric validation passes; commercial sub-metre imagery and
-  facility calibration are required for operational use.
+## Output and diagnostics
 
-The image analysis shares one circular-roof detection between measurement,
-validation, and overlay generation. This keeps the reported percentage and
-the review image tied to the same detected feature.
+Successful output includes:
 
-## Development checks
+- `tank` and `imagery`: candidate metadata and imagery provenance.
+- `fill_percentage`: the exploratory proxy output.
+- `certainty` and `certainty_score`: heuristic image-quality indicators, not calibrated probabilities or confidence intervals.
+- `diagnostics`, `solar_elevation_degrees` and `target_validation`: review information.
+- `inspection_overlay`: path and geometry for the generated review image.
 
-Run the focused test suite before committing:
+The overlay uses cyan for the detected circle, orange for candidate horizontal edges and green for the selected boundary. If no candidate edge is found, the green line is inferred from the proxy. Its presence alone does not establish that a physical lid boundary was detected.
+
+Handled discovery, provider and measurement failures produce an `unavailable` JSON result and a non-zero exit. Some invalid selections, including no discovered tanks, exit with a text message.
+
+## Tests
 
 ```bash
 python -m unittest discover -v
 python -m py_compile satellite_fill.py estimate_satellite_fill.py test_satellite_fill.py
 ```
 
+The seven unit tests cover quality-label thresholds, bounded outputs on a synthetic roof, the coarse-imagery penalty, overlay creation, scale rejection, commercial crop metadata and a mocked Sentinel tile request. These checks exercise software behaviour; they do not establish real-world estimation accuracy.
+
+## Imagery configuration
+
+`--provider auto` uses `TANK_IMAGERY_URL_TEMPLATE` when configured. The template accepts `latitude`, `longitude`, `start`, `end` and `bbox` placeholders. Keep credentials in your environment or provider proxy, outside source control.
+
+The commercial adapter currently assumes 0.5 m resolution and uses the end of the search window as the observation time. A production integration would need the actual resolution, acquisition time and georeferencing from the provider.
+
+The Sentinel adapter requests the Web Mercator tile containing the coordinate. It does not re-centre that tile around the tank, while the estimator currently uses the image centre as its target. This mismatch needs correcting before relying on tank identity checks.
+
+## Limitations
+
+- The fill proxy uses image gradients with fixed coefficients. Solar elevation is recorded and affects the quality penalty; it is not used in a calibrated shadow-to-height model.
+- Sentinel-2's 10 m imagery is too coarse for precise floating-roof edge measurement. Resampling a display tile does not create additional spatial detail.
+- Missing tank dimensions are inferred. Mapped tanks may have incomplete dimensions or unsuitable roof types.
+- Position and scale checks reduce some mismatches but do not prove the detected feature belongs to the intended tank.
+- Dependencies are currently unpinned. External-service behaviour and compatibility may change.
+- There is no measured accuracy benchmark, operational deployment or trading-performance claim in this repository.
+
+## Next development priorities
+
+Obtain labelled high-resolution imagery with verified acquisition metadata and tank measurements. Correct the coordinate-to-pixel mapping, replace the heuristic with a physically justified estimator, and evaluate errors on held-out tanks and dates. Calibrate uncertainty and expand failure-case tests before considering operational use.
